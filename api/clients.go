@@ -1,278 +1,255 @@
 package api
 
 import (
-	"crypto/md5"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"io"
-	"log"
-	"net/http"
-	"net/url"
-	"strings"
-	"sublink/models"
-	"sublink/node"
+"crypto/md5"
+"encoding/hex"
+"encoding/json"
+"fmt"
+"io"
+"log"
+"net/http"
+"net/url"
+"strings"
+"sublink/models"
+"sublink/node"
 
-	"github.com/gin-gonic/gin"
+"github.com/gin-gonic/gin"
 )
 
-var SunName string
+var sunName string // 使用小写命名
 
-// md5加密
-func Md5(src string) string {
-	m := md5.New()
-	m.Write([]byte(src))
-	res := hex.EncodeToString(m.Sum(nil))
-	return res
+// md5Hash MD5 加密
+func md5Hash(src string) string {
+m := md5.New()
+m.Write([]byte(src))
+return hex.EncodeToString(m.Sum(nil))
 }
+
+// GetClient 获取客户端配置
 func GetClient(c *gin.Context) {
-	// 获取协议头
-	token := c.Query("token")
-	ClientIndex := c.Query("client") // 客户端标识
-	if token == "" {
-		log.Println("token为空")
-		c.Writer.WriteString("token为空")
-		return
-	}
-	// fmt.Println(c.Query("token"))
-	Sub := new(models.Subcription)
-	// 获取所有订阅
-	list, _ := Sub.List()
-	// 查找订阅是否包含此名字
-	for _, sub := range list {
-		// 数据库订阅名字赋值变量
-		SunName = sub.Name
-		//查找token的md5是否匹配并且转换成小写
-		if Md5(SunName) == strings.ToLower(token) {
-			// 判断是否带客户端参数
-			switch ClientIndex {
-			case "clash":
-				GetClash(c)
-				return
-			case "surge":
-				GetSurge(c)
-				return
-			case "v2ray":
-				GetV2ray(c)
-				return
-			}
-			// 自动识别客户端
-			ClientList := []string{"clash", "surge"}
-			for k, v := range c.Request.Header {
-				if k == "User-Agent" {
-					for _, UserAgent := range v {
-						if UserAgent == "" {
-							fmt.Println("User-Agent为空")
-						}
-						// fmt.Println("协议头:", UserAgent)
-						// 遍历客户端列表
-						// SunName = sub.Name
-						for _, client := range ClientList {
-							// fmt.Println(strings.ToLower(UserAgent), strings.ToLower(client))
-							// fmt.Println(strings.Contains(strings.ToLower(UserAgent), strings.ToLower(client)))
-							if strings.Contains(strings.ToLower(UserAgent), strings.ToLower(client)) {
-								// fmt.Println("客户端", client)
-								switch client {
-								case "clash":
-									GetClash(c)
-									return
-								case "surge":
-									GetSurge(c)
-									return
-								default:
-									fmt.Println("未知客户端") // 这个应该是不能达到的，因为已经在上面列出所有情况
-								}
-								// 找到匹配的客户端后退出循环
+token := c.Query("token")
+clientIndex := c.Query("client")
 
-							}
-						}
-						GetV2ray(c)
-					}
-
-				}
-			}
-		}
-	}
-
+if token == "" {
+log.Println("token 为空")
+c.Writer.WriteString("token 为空")
+return
 }
+
+sub := new(models.Subcription)
+list, err := sub.List()
+if err != nil {
+log.Printf("获取订阅列表失败：%v", err)
+c.Writer.WriteString("获取订阅列表失败")
+return
+}
+
+// 查找匹配的订阅
+for _, sub := range list {
+sunName = sub.Name
+if md5Hash(sunName) == strings.ToLower(token) {
+handleClientRequest(c, clientIndex)
+return
+}
+}
+
+log.Println("未找到匹配的订阅")
+c.Writer.WriteString("未找到匹配的订阅")
+}
+
+// handleClientRequest 处理客户端请求
+func handleClientRequest(c *gin.Context, clientIndex string) {
+// 如果指定了客户端类型，直接返回对应配置
+switch clientIndex {
+case "clash":
+GetClash(c)
+return
+case "surge":
+GetSurge(c)
+return
+case "v2ray":
+GetV2ray(c)
+return
+}
+
+// 自动识别客户端
+userAgent := c.GetHeader("User-Agent")
+if userAgent == "" {
+log.Println("User-Agent 为空")
+GetV2ray(c)
+return
+}
+
+clientList := []string{"clash", "surge"}
+for _, client := range clientList {
+if strings.Contains(strings.ToLower(userAgent), strings.ToLower(client)) {
+switch client {
+case "clash":
+GetClash(c)
+return
+case "surge":
+GetSurge(c)
+return
+}
+}
+}
+
+// 默认返回 V2Ray 配置
+GetV2ray(c)
+}
+
+// GetV2ray 获取 V2Ray 配置
 func GetV2ray(c *gin.Context) {
-	var sub models.Subcription
-	if SunName == "" {
-		c.Writer.WriteString("订阅名为空")
-		return
-	}
-	// subname := c.Param("subname")
-	// subname := SunName
-	// subname = node.Base64Decode(subname)
-	sub.Name = SunName
-	err := sub.Find()
-	if err != nil {
-		c.Writer.WriteString("找不到这个订阅:" + SunName)
-		return
-	}
-	err = sub.Find()
-	if err != nil {
-		c.Writer.WriteString("读取错误")
-		return
-	}
-	baselist := ""
-	for _, v := range sub.Nodes {
-		switch {
-		// 如果包含多条节点
-		case strings.Contains(v.Link, ","):
-			links := strings.Split(v.Link, ",")
-			baselist += strings.Join(links, "\n") + "\n"
-			continue
-		//如果是订阅转换
-		case strings.Contains(v.Link, "http://") || strings.Contains(v.Link, "https://"):
-			resp, err := http.Get(v.Link)
-			if err != nil {
-				log.Println(err)
-				return
-			}
-			defer resp.Body.Close()
-			body, _ := io.ReadAll(resp.Body)
-			nodes := node.Base64Decode(string(body))
-			baselist += nodes + "\n"
-		// 默认
-		default:
-			baselist += v.Link + "\n"
-		}
-	}
-	c.Set("subname", SunName)
-	filename := fmt.Sprintf("%s.txt", SunName)
-	encodedFilename := url.QueryEscape(filename)
-	c.Writer.Header().Set("Content-Disposition", "inline; filename*=utf-8''"+encodedFilename)
-	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-	c.Writer.WriteString(node.Base64Encode(baselist))
+var sub models.Subcription
+if sunName == "" {
+c.Writer.WriteString("订阅名为空")
+return
 }
+
+sub.Name = sunName
+if err := sub.Find(); err != nil {
+c.Writer.WriteString("找不到这个订阅:" + sunName)
+return
+}
+
+baselist := buildNodeLinks(sub.Nodes)
+
+c.Set("subname", sunName)
+filename := fmt.Sprintf("%s.txt", sunName)
+encodedFilename := url.QueryEscape(filename)
+c.Writer.Header().Set("Content-Disposition", "inline; filename*=utf-8''"+encodedFilename)
+c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+c.Writer.WriteString(node.Base64Encode(baselist))
+}
+
+// GetClash 获取 Clash 配置
 func GetClash(c *gin.Context) {
-	var sub models.Subcription
-	// subname := c.Param("subname")
-	// subname := node.Base64Decode(SunName)
-	sub.Name = SunName
-	err := sub.Find()
-	if err != nil {
-		c.Writer.WriteString("找不到这个订阅:" + SunName)
-		return
-	}
-	// err = sub.Find()
+var sub models.Subcription
+sub.Name = sunName
 
-	urls := []string{}
-
-	models.DB.Model(sub).Preload("Nodes").Find(&sub)
-	log.Println("订阅名:", sub.Nodes)
-	for _, v := range sub.Nodes {
-		log.Println("节点信息:", v)
-		log.Println("节点链接:", v.Link)
-		switch {
-		// 如果包含多条节点
-		case strings.Contains(v.Link, ","):
-			links := strings.Split(v.Link, ",")
-			urls = append(urls, links...)
-			continue
-		//如果是订阅转换
-		case strings.Contains(v.Link, "http://") || strings.Contains(v.Link, "https://"):
-			resp, err := http.Get(v.Link)
-			if err != nil {
-				log.Println(err)
-				return
-			}
-			defer resp.Body.Close()
-			body, _ := io.ReadAll(resp.Body)
-			nodes := node.Base64Decode(string(body))
-			links := strings.Split(nodes, "\n")
-			urls = append(urls, links...)
-		// 默认
-		default:
-			urls = append(urls, v.Link)
-		}
-	}
-	log.Println("urls", urls)
-	var configs node.SqlConfig
-	err = json.Unmarshal([]byte(sub.Config), &configs)
-	if err != nil {
-		c.Writer.WriteString("配置读取错误")
-		return
-	}
-	DecodeClash, err := node.EncodeClash(urls, configs)
-	if err != nil {
-		c.Writer.WriteString(err.Error())
-		return
-	}
-	c.Set("subname", SunName)
-	filename := fmt.Sprintf("%s.yaml", SunName)
-	encodedFilename := url.QueryEscape(filename)
-	c.Writer.Header().Set("Content-Disposition", "inline; filename*=utf-8''"+encodedFilename)
-	c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	c.Writer.WriteString(string(DecodeClash))
+if err := sub.Find(); err != nil {
+c.Writer.WriteString("找不到这个订阅:" + sunName)
+return
 }
-func GetSurge(c *gin.Context) {
-	var sub models.Subcription
-	// subname := c.Param("subname")
-	// subname := node.Base64Decode(SunName)
-	sub.Name = SunName
-	err := sub.Find()
-	if err != nil {
-		c.Writer.WriteString("找不到这个订阅:" + SunName)
-		return
-	}
-	err = sub.Find()
-	if err != nil {
-		c.Writer.WriteString("读取错误")
-		return
-	}
-	urls := []string{}
-	for _, v := range sub.Nodes {
-		switch {
-		// 如果包含多条节点
-		case strings.Contains(v.Link, ","):
-			links := strings.Split(v.Link, ",")
-			urls = append(urls, links...)
-			continue
-		//如果是订阅转换
-		case strings.Contains(v.Link, "http://") || strings.Contains(v.Link, "https://"):
-			resp, err := http.Get(v.Link)
-			if err != nil {
-				log.Println(err)
-				return
-			}
-			defer resp.Body.Close()
-			body, _ := io.ReadAll(resp.Body)
-			nodes := node.Base64Decode(string(body))
-			links := strings.Split(nodes, "\n")
-			urls = append(urls, links...)
-		// 默认
-		default:
-			urls = append(urls, v.Link)
-		}
-	}
 
-	var configs node.SqlConfig
-	err = json.Unmarshal([]byte(sub.Config), &configs)
-	if err != nil {
-		c.Writer.WriteString("配置读取错误")
-		return
-	}
-	// log.Println("surge路径:", configs)
-	DecodeClash, err := node.EncodeSurge(urls, configs)
-	if err != nil {
-		c.Writer.WriteString(err.Error())
-		return
-	}
-	c.Set("subname", SunName)
-	filename := fmt.Sprintf("%s.conf", SunName)
-	encodedFilename := url.QueryEscape(filename)
-	c.Writer.Header().Set("Content-Disposition", "inline; filename*=utf-8''"+encodedFilename)
-	c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	host := c.Request.Host
-	url := c.Request.URL.String()
-	// 如果包含头部更新信息
-	if strings.Contains(DecodeClash, "#!MANAGED-CONFIG") {
-		c.Writer.WriteString(DecodeClash)
-		return
-	}
-	// 否则就插入头部更新信息
-	interval := fmt.Sprintf("#!MANAGED-CONFIG %s interval=86400 strict=false", host+url)
-	c.Writer.WriteString(string(interval + "\n" + DecodeClash))
+models.DB.Model(sub).Preload("Nodes").Find(&sub)
+log.Println("订阅名:", sub.Nodes)
+
+urls := buildNodeURLs(sub.Nodes)
+log.Println("urls", urls)
+
+var configs node.SqlConfig
+if err := json.Unmarshal([]byte(sub.Config), &configs); err != nil {
+c.Writer.WriteString("配置读取错误")
+return
+}
+
+decodeClash, err := node.EncodeClash(urls, configs)
+if err != nil {
+c.Writer.WriteString(err.Error())
+return
+}
+
+c.Set("subname", sunName)
+filename := fmt.Sprintf("%s.yaml", sunName)
+encodedFilename := url.QueryEscape(filename)
+c.Writer.Header().Set("Content-Disposition", "inline; filename*=utf-8''"+encodedFilename)
+c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+c.Writer.WriteString(string(decodeClash))
+}
+
+// GetSurge 获取 Surge 配置
+func GetSurge(c *gin.Context) {
+var sub models.Subcription
+sub.Name = sunName
+
+if err := sub.Find(); err != nil {
+c.Writer.WriteString("找不到这个订阅:" + sunName)
+return
+}
+
+urls := buildNodeURLs(sub.Nodes)
+
+var configs node.SqlConfig
+if err := json.Unmarshal([]byte(sub.Config), &configs); err != nil {
+c.Writer.WriteString("配置读取错误")
+return
+}
+
+decodeClash, err := node.EncodeSurge(urls, configs)
+if err != nil {
+c.Writer.WriteString(err.Error())
+return
+}
+
+c.Set("subname", sunName)
+filename := fmt.Sprintf("%s.conf", sunName)
+encodedFilename := url.QueryEscape(filename)
+c.Writer.Header().Set("Content-Disposition", "inline; filename*=utf-8''"+encodedFilename)
+c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+
+host := c.Request.Host
+reqURL := c.Request.URL.String()
+
+// 如果包含头部更新信息，直接返回
+if strings.Contains(decodeClash, "#!MANAGED-CONFIG") {
+c.Writer.WriteString(decodeClash)
+return
+}
+
+// 否则插入头部更新信息
+interval := fmt.Sprintf("#!MANAGED-CONFIG %s interval=86400 strict=false", host+reqURL)
+c.Writer.WriteString(interval + "\n" + decodeClash)
+}
+
+// buildNodeLinks 构建节点链接列表 (V2Ray)
+func buildNodeLinks(nodes []models.Node) string {
+var baselist strings.Builder
+for _, v := range nodes {
+switch {
+case strings.Contains(v.Link, ","):
+links := strings.Split(v.Link, ",")
+for _, link := range links {
+baselist.WriteString(link + "\n")
+}
+case strings.Contains(v.Link, "http://") || strings.Contains(v.Link, "https://"):
+resp, err := http.Get(v.Link)
+if err != nil {
+log.Println(err)
+continue
+}
+body, _ := io.ReadAll(resp.Body)
+resp.Body.Close()
+baselist.WriteString(node.Base64Decode(string(body)) + "\n")
+default:
+baselist.WriteString(v.Link + "\n")
+}
+}
+return baselist.String()
+}
+
+// buildNodeURLs 构建节点 URL 列表 (Clash/Surge)
+func buildNodeURLs(nodes []models.Node) []string {
+var urls []string
+for _, v := range nodes {
+switch {
+case strings.Contains(v.Link, ","):
+links := strings.Split(v.Link, ",")
+urls = append(urls, links...)
+case strings.Contains(v.Link, "http://") || strings.Contains(v.Link, "https://"):
+resp, err := http.Get(v.Link)
+if err != nil {
+log.Println(err)
+continue
+}
+body, _ := io.ReadAll(resp.Body)
+resp.Body.Close()
+decoded := node.Base64Decode(string(body))
+links := strings.Split(decoded, "\n")
+urls = append(urls, links...)
+default:
+urls = append(urls, v.Link)
+}
+}
+return urls
 }
