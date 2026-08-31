@@ -84,7 +84,9 @@ func main() {
 		return
 	}
 	// 初始化数据库
-	models.InitSqlite()
+	if err := models.InitSqlite(); err != nil {
+		log.Fatalf("数据库初始化失败：%v", err)
+	}
 	// 获取命令行参数
 	args := os.Args
 	// 如果长度小于2则没有接收到任何参数
