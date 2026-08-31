@@ -1,8 +1,1 @@
-.DS_Store
-*.DS_Store
-db
-logs
-sublink_amd64 
-sublink_arm64
-sublink.exe
-install.sh
+Nothing needs to be added to .gitignore since the changes only include shell script files (.sh) which are source files and should not be ignored.

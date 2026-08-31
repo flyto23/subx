@@ -9,7 +9,7 @@ import (
 var store = base64Captcha.DefaultMemStore
 
 // GetCaptcha 获取验证码
-func GetCaptcha() (string, string, string, error) {
+func GetCaptcha() (string, string, error) {
 	driver := base64Captcha.NewDriverMath(60, 180, 80, 0, &color.RGBA{255, 255, 255, 255}, nil, nil)
 	return base64Captcha.NewCaptcha(driver, store).Generate()
 }
