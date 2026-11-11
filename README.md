@@ -13,7 +13,7 @@
 
 ### 安装
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-repo/sublinkx/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/flyto23/subx/main/install.sh | bash
 ```
 
 ### 运行
